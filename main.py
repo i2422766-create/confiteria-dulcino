@@ -1,145 +1,112 @@
-
-import os
-import pandas as pd
 import streamlit as st
+import pandas as pd
 from datetime import datetime
-from typing import List
-from dataclasses import dataclass
+from supabase import create_client, Client
 
-# ---------------------------
-# CONFIGURACIÓN
-# ---------------------------
+# Cargar claves desde el entorno seguro
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-ALLOWED_CATEGORIES = [
-    "Chocolates", "Caramelos", "Mashmelos",
-    "Galletas", "Salados", "Gomas de mascar"
-]
+ALLOWED_CATEGORIES = ["Chocolate", "Galletas", "Caramelos", "Snacks"]
 
-CSV_DIR = "datos_sinteticos"
-CSV_PATH = os.path.join(CSV_DIR, "products.csv")
+def sb_list():
+    res = supabase.table("products").select("*").order("ts", desc=True).execute()
+    return res.data
 
+def sb_insert(nombre, precio, categorias, en_venta):
+    payload = {
+        "nombre": nombre,
+        "precio": precio,
+        "categorias": categorias,
+        "en_venta": en_venta,
+        "ts": datetime.utcnow().isoformat()
+    }
+    supabase.table("products").insert(payload).execute()
 
-# ---------------------------
-# CLASES PERSONALIZADAS
-# ---------------------------
+def sb_update(id_, nombre, precio, categorias, en_venta):
+    payload = {
+        "nombre": nombre,
+        "precio": precio,
+        "categorias": categorias,
+        "en_venta": en_venta
+    }
+    supabase.table("products").update(payload).eq("id", id_).execute()
 
-class ValidationError(Exception):
-    pass
+def sb_delete(id_):
+    supabase.table("products").delete().eq("id", id_).execute()
 
-class PriceParseError(ValidationError):
-    pass
-
-
-# ---------------------------
-# DATACLASS PARA PRODUCTO
-# ---------------------------
-
-@dataclass
-class Producto:
-    nombre: str
-    precio: float
-    categorias: List[str]
-    en_venta: bool
-    ts: str
-
-
-# ---------------------------
-# FUNCIONES AUXILIARES
-# ---------------------------
-
-def ensure_dir():
-    if not os.path.exists(CSV_DIR):
-        os.makedirs(CSV_DIR)
-
-def load_df():
-    if os.path.exists(CSV_PATH):
-        return pd.read_csv(CSV_PATH)
-    else:
-        return pd.DataFrame(columns=["nombre", "precio", "categorias", "en_venta", "ts"])
-
-def validate(nombre, precio, categorias, en_venta_label):
-    # Validar nombre
-    if not nombre:
-        raise ValidationError("El nombre no puede estar vacío.")
-    if len(nombre) > 20:
-        raise ValidationError("El nombre no puede tener más de 20 caracteres.")
-
-    # Validar precio
+def validar(nombre, precio, categorias):
+    if not nombre or len(nombre.strip()) == 0 or len(nombre.strip()) > 20:
+        return "El nombre es obligatorio y debe tener menos de 20 caracteres."
     try:
         precio = float(precio)
+        if precio <= 0 or precio > 999:
+            return "El precio debe ser mayor a 0 y menor a 999."
     except ValueError:
-        raise PriceParseError("Por favor verifique el campo del precio.")
+        return "El precio debe ser un número válido."
+    if not categorias or not all(c in ALLOWED_CATEGORIES for c in categorias):
+        return "Debes seleccionar al menos una categoría válida."
+    return None
 
-    if precio <= 0 or precio >= 999:
-        raise ValidationError("El precio debe ser mayor a 0 y menor a 999.")
+def mostrar_productos():
+    data = sb_list()
+    if not data:
+        st.info("No hay productos registrados.")
+        return []
+    df = pd.DataFrame(data)
+    st.dataframe(df, use_container_width=True)
+    return data
 
-    # Validar categorías
-    if not categorias:
-        raise ValidationError("Debe seleccionar al menos una categoría.")
-    for cat in categorias:
-        if cat not in ALLOWED_CATEGORIES:
-            raise ValidationError(f"Categoría inválida: {cat}")
+def main():
+    st.title("Confitería Dulcino - Registro de productos")
 
-    # Validar en_venta (Sí/No)
-    if en_venta_label not in ["Sí", "No"]:
-        raise ValidationError("Seleccione si el producto está en venta o no.")
+    st.subheader("Agregar nuevo producto")
+    with st.form("formulario_agregar"):
+        nombre = st.text_input("Nombre del producto")
+        precio = st.text_input("Precio")
+        categorias = st.multiselect("Categorías", ALLOWED_CATEGORIES)
+        en_venta = st.radio("¿Está en venta?", [True, False], format_func=lambda x: "Sí" if x else "No")
+        submitted = st.form_submit_button("Guardar")
 
-    en_venta = en_venta_label == "Sí"
+        if submitted:
+            error = validar(nombre, precio, categorias)
+            if error:
+                st.warning(error)
+            else:
+                sb_insert(nombre.strip(), float(precio), categorias, en_venta)
+                st.success("Producto agregado exitosamente")
 
-    return nombre, precio, categorias, en_venta
+    st.subheader("Productos registrados")
+    productos = mostrar_productos()
 
+    if productos:
+        opciones = {f"{p['nombre']} - S/ {p['precio']} [{p['id'][:6]}]": p for p in productos}
+        seleccion = st.selectbox("Selecciona un producto para editar/eliminar", list(opciones.keys()))
+        producto_sel = opciones[seleccion]
 
-# ---------------------------
-# INTERFAZ STREAMLIT
-# ---------------------------
+        st.write("### Editar producto")
+        with st.form("formulario_editar"):
+            nombre_e = st.text_input("Nombre", value=producto_sel['nombre'])
+            precio_e = st.text_input("Precio", value=str(producto_sel['precio']))
+            categorias_e = st.multiselect("Categorías", ALLOWED_CATEGORIES, default=producto_sel['categorias'])
+            en_venta_e = st.radio("¿Está en venta?", [True, False], index=0 if producto_sel['en_venta'] else 1,
+                                   format_func=lambda x: "Sí" if x else "No")
+            col1, col2 = st.columns(2)
+            editar = col1.form_submit_button("Actualizar")
+            eliminar = col2.form_submit_button("Eliminar")
 
-st.set_page_config(page_title="Confitería Dulcino", layout="centered")
-st.title("🍬 Registro de productos - Confitería Dulcino")
+            if editar:
+                error = validar(nombre_e, precio_e, categorias_e)
+                if error:
+                    st.warning(error)
+                else:
+                    sb_update(producto_sel['id'], nombre_e.strip(), float(precio_e), categorias_e, en_venta_e)
+                    st.success("Producto actualizado correctamente")
 
-st.markdown("Complete el siguiente formulario para agregar un nuevo producto:")
+            if eliminar:
+                sb_delete(producto_sel['id'])
+                st.success("Producto eliminado correctamente")
 
-with st.form("form-producto"):
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        nombre = st.text_input("Nombre del producto", max_chars=20)
-        precio = st.text_input("Precio del producto")
-
-    with col2:
-        categorias = st.multiselect("Categorías", options=ALLOWED_CATEGORIES)
-        en_venta_label = st.radio("¿Está en venta?", options=["Sí", "No"])
-
-    submitted = st.form_submit_button("Guardar")
-
-    if submitted:
-        try:
-            # Validación
-            nombre_val, precio_val, categorias_val, en_venta_val = validate(
-                nombre, precio, categorias, en_venta_label
-            )
-
-            # Crear producto
-            nuevo_producto = {
-                "nombre": nombre_val,
-                "precio": precio_val,
-                "categorias": ";".join(categorias_val),
-                "en_venta": en_venta_val,
-                "ts": datetime.now().isoformat()
-            }
-
-            # Guardar en CSV
-            df = load_df()
-            df = pd.concat([df, pd.DataFrame([nuevo_producto])], ignore_index=True)
-            ensure_dir()
-            df.to_csv(CSV_PATH, index=False, encoding="utf-8")
-
-            st.success("✅ ¡Felicidades, su producto se agregó!")
-
-        except PriceParseError as ppe:
-            st.error("⚠️ Por favor verifique el campo del precio.")
-        except ValidationError as ve:
-            st.error("❌ Lo sentimos, no pudo crear este producto.")
-            st.warning(f"Detalle: {str(ve)}")
-        except Exception as e:
-            st.error("❌ Error inesperado. Contacte al soporte.")
-            st.warning(f"Debug: {str(e)}")
+if __name__ == '__main__':
+    main()
