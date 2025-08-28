@@ -1,2 +1,11 @@
+# ----- Núcleo de la app ------
 streamlit
 pandas
+numpy
+
+# ----- Base de datos ------
+supabase
+
+# ----- Utilidades comunes ------
+requests
+rich
