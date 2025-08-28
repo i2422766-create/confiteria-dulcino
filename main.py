@@ -3,12 +3,11 @@ import streamlit as st
 from supabase import create_client
 from datetime import datetime
 
-# Conexión a Supabase
+# Conexión Supabase
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
-# Insertar producto
 def sb_insert(nombre, precio, categorias, en_venta):
     payload = {
         "nombre": nombre,
@@ -17,53 +16,59 @@ def sb_insert(nombre, precio, categorias, en_venta):
         "en_venta": en_venta,
         "ts": datetime.now().isoformat()
     }
-    data = supabase.table("products").insert(payload).execute()
-    return data
+    return supabase.table("products").insert(payload).execute()
 
-# Obtener productos
-def sb_get():
-    data = supabase.table("products").select("*").execute()
-    return data.data
+def sb_listar():
+    return supabase.table("products").select("*").order("ts", desc=True).limit(10).execute()
 
-# Eliminar producto por ID
-def sb_delete(product_id):
-    supabase.table("products").delete().eq("id", product_id).execute()
+def sb_delete(id_producto):
+    return supabase.table("products").delete().eq("id", id_producto).execute()
 
-# Página principal
 def main():
     st.title("Confitería Dulcino 🍬")
 
-    st.header("Registrar producto nuevo")
-    with st.form("product_form"):
+    menu = ["Registrar producto", "Ver productos", "Eliminar producto"]
+    choice = st.sidebar.selectbox("Menú", menu)
+
+    if choice == "Registrar producto":
+        st.subheader("Agregar nuevo producto")
         nombre = st.text_input("Nombre del producto")
-        precio = st.number_input("Precio (S/)", min_value=0.0, step=0.5)
-        categorias = st.text_input("Categoría")
-        en_venta = st.checkbox("¿Disponible para la venta?")
-        submitted = st.form_submit_button("Guardar")
+        precio = st.text_input("Precio")
+        categorias = st.multiselect("Categorías", ["Snacks", "Bebidas", "Dulces", "Galletas"])
+        en_venta = st.checkbox("¿Está en venta?", value=True)
 
-        if submitted:
-            sb_insert(nombre.strip(), float(precio), categorias, en_venta)
-            st.success(f"Producto '{nombre}' guardado exitosamente.")
+        if st.button("Guardar"):
+            if nombre and precio:
+                sb_insert(nombre.strip(), float(precio), categorias, en_venta)
+                st.success("Producto guardado exitosamente")
+            else:
+                st.warning("Por favor, completa los campos requeridos")
 
-    st.header("Productos registrados")
-    productos = sb_get()
+    elif choice == "Ver productos":
+        st.subheader("Productos registrados")
+        data = sb_listar()
+        productos = data.data
 
-    if productos:
-        st.table(productos)
+        if productos:
+            st.table(productos)
+        else:
+            st.info("No hay productos registrados.")
 
-        st.header("Eliminar producto")
-        opciones = {
-            f"{p['nombre']} – S/ {p['precio']} [{str(p['id'])[:6}]}": p
-            for p in productos
-        }
-        seleccion = st.selectbox("Selecciona un producto para eliminar", opciones.keys())
-        if st.button("Eliminar"):
-            producto = opciones[seleccion]
-            sb_delete(producto["id"])
-            st.warning(f"Producto '{producto['nombre']}' eliminado.")
-            st.experimental_rerun()
-    else:
-        st.info("No hay productos registrados.")
+    elif choice == "Eliminar producto":
+        st.subheader("Eliminar producto")
+        data = sb_listar()
+        productos = data.data
+
+        if productos:
+            opciones = {f"{p['nombre']} – S/ {p['precio']} [{str(p['id'])[:6]}]": p for p in productos}
+            seleccion = st.selectbox("Selecciona el producto", list(opciones.keys()))
+
+            if st.button("Eliminar"):
+                id_producto = opciones[seleccion]["id"]
+                sb_delete(id_producto)
+                st.success("Producto eliminado exitosamente")
+        else:
+            st.info("No hay productos para eliminar.")
 
 if __name__ == "__main__":
     main()
